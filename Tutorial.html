@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zinc Metalloprotein Docking Pipeline: Tutorial</title>
+<style>
+:root{--bg:#fafaf7;--panel:#fff;--text:#1f2328;--muted:#5d6670;--line:#dcdfe3;--accent:#0b6e6e;--code-bg:#f1f3f2;--warn:#fff4e0;--warn-line:#e0a030}
+@media (prefers-color-scheme:dark){:root{--bg:#14171a;--panel:#1b1f23;--text:#e6e8ea;--muted:#9aa4ad;--line:#2d333a;--accent:#4fc3c3;--code-bg:#22272c;--warn:#2b2414;--warn-line:#a67a22}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:1rem}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{display:flex;max-width:1100px;margin:0 auto}
+nav{position:sticky;top:0;align-self:flex-start;width:230px;flex:none;height:100vh;overflow:auto;padding:2rem 1rem;border-right:1px solid var(--line)}
+nav strong{display:block;margin-bottom:.8rem;color:var(--accent)}
+nav a{display:block;padding:.25rem 0;color:var(--muted);text-decoration:none;font-size:.93rem}
+nav a:hover{color:var(--accent)}
+main{flex:1;min-width:0;padding:2rem 1.6rem 4rem}
+h1{font-size:2rem;margin:.2rem 0 .4rem}
+h2{margin-top:2.6rem;padding-top:.4rem;border-top:1px solid var(--line);font-size:1.45rem}
+h3{margin-top:1.6rem;font-size:1.1rem}
+.lead{color:var(--muted);font-size:1.1rem}
+a{color:var(--accent)}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px;font:0.9em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.cb{position:relative;margin:1rem 0}
+pre{margin:0;background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;font:.88rem/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+pre code{background:none;padding:0}
+.cb button{position:absolute;top:.4rem;right:.4rem;font:.75rem system-ui;padding:.2rem .55rem;border:1px solid var(--line);border-radius:5px;background:var(--panel);color:var(--muted);cursor:pointer}
+.cb button:hover{color:var(--accent)}
+.note,.warn{border-left:4px solid var(--accent);background:var(--panel);border-radius:0 8px 8px 0;padding:.7rem 1rem;margin:1.2rem 0}
+.warn{border-color:var(--warn-line);background:var(--warn)}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.93rem;margin:1rem 0}
+th,td{border:1px solid var(--line);padding:.5rem .7rem;text-align:left;vertical-align:top}
+th{background:var(--panel)}
+ol.steps{padding-left:1.2rem}
+ol.steps li{margin:.5rem 0}
+@media(max-width:800px){.wrap{display:block}nav{position:static;width:auto;height:auto;border:0;border-bottom:1px solid var(--line);padding:1rem}nav a{display:inline-block;margin-right:.9rem}main{padding:1.2rem 1rem 3rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+<strong>Contents</strong>
+<a href="#overview">Overview</a>
+<a href="#requirements">Requirements</a>
+<a href="#quickstart">Quick start</a>
+<a href="#config">Configuration</a>
+<a href="#steps">What the script does</a>
+<a href="#resume">Resuming and re-running</a>
+<a href="#outputs">Output files</a>
+<a href="#results">Reading results</a>
+<a href="#pymol">Viewing in PyMOL</a>
+<a href="#troubleshooting">Troubleshooting</a>
+<a href="#limits">Limitations</a>
+</nav>
+<main>
+<h1>Zinc Metalloprotein Docking Pipeline</h1>
+<p class="lead">Dock many small molecules into many zinc-containing proteins on a SLURM cluster, using AutoDock Vina with the AutoDock4Zn force field.</p>
+
+<h2 id="overview">Overview</h2>
+<p>The pipeline takes a folder of ligands and a folder of protein structures and docks every ligand into every protein, with the search box centred on each protein’s zinc ion. It uses the AutoDock4Zn approach: a tetrahedral pseudoatom (<code>TZ</code>) is added at the zinc so the scoring function can represent metal coordination.</p>
+<ol class="steps">
+<li><strong>Ligands</strong> are cleaned with <code>scrub.py</code> and converted to PDBQT with Meeko.</li>
+<li><strong>Receptors</strong> are converted to PDBQT, and <code>zinc_pseudo.py</code> adds the <code>TZ</code> pseudoatoms.</li>
+<li><strong>Grids</strong> are written (a Python 3 step built into the script) and computed with <code>autogrid4</code>.</li>
+<li><strong>Docking</strong> runs in Vina with <code>--scoring ad4</code>.</li>
+<li><strong>Post-processing</strong> runs your <code>postprocess.py</code> to summarise the scores.</li>
+</ol>
+<div class="note">No MGLTools is needed. <code>zinc_pseudo.py</code> is plain Python and runs under Python 3, and the grid parameter file is written by a small Python function inside <code>zinc_docking.sh</code>.</div>
+
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li>A SLURM cluster, and the account name to charge jobs to.</li>
+<li>A conda environment called <code>docking</code> containing Meeko (<code>mk_prepare_ligand.py</code>, <code>mk_prepare_receptor.py</code>), <code>scrub.py</code>, <code>vina</code>, <code>autogrid4</code>, and the Python packages your <code>postprocess.py</code> uses. The script creates it from <code>environment.yml</code> if it is missing.</li>
+<li>A clone of <a href="https://github.com/ccsb-scripps/AutoDock-Vina">AutoDock-Vina</a>. Only <code>example/autodock_scripts/zinc_pseudo.py</code> is used.</li>
+<li><code>AD4Zn.dat</code>, the AutoDock4Zn parameter file, in the job directory.</li>
+</ul>
+<div class="warn"><strong>Create the conda environment once, by hand,</strong> before submitting jobs. If several jobs start together and each tries to create it, they can collide.</div>
+
+<h2 id="quickstart">Quick start</h2>
+<h3>1. Lay out the job directory</h3>
+<div class="cb"><pre><code>MultipleDocking/
+├── zinc_docking.sh
+├── environment.yml
+├── AD4Zn.dat
+├── postprocess.py
+├── ligands/        # .pdb, .mol2 or .sdf small molecules
+└── receptors/      # .pdb or .cif proteins containing a Zn ion</code></pre></div>
+<h3>2. Edit the script</h3>
+<p>Change <code>#SBATCH --account</code> to your account. Then set the path to the AutoDock-Vina scripts, either by editing the line near the top of the file or at submit time:</p>
+<div class="cb"><pre><code>VINA_SCRIPTS="${VINA_SCRIPTS:-/path/to/AutoDock-Vina/example/autodock_scripts}"</code></pre></div>
+<p>The part after <code>:-</code> is the default. Note the hyphen: <code>${VAR:-default}</code> is correct, and <code>${VAR:default}</code> is a syntax error.</p>
+<h3>3. Submit</h3>
+<div class="cb"><pre><code>sbatch zinc_docking.sh                    # normal run
+FORCE=1 sbatch zinc_docking.sh            # redo every step</code></pre></div>
+<h3>4. Watch it</h3>
+<div class="cb"><pre><code>squeue -u $USER
+tail -f slurm-&lt;jobid&gt;.output
+cat slurm-&lt;jobid&gt;.error</code></pre></div>
+
+<h2 id="config">Configuration</h2>
+<div class="tw"><table>
+<tr><th>Setting</th><th>Where</th><th>Meaning</th></tr>
+<tr><td><code>VINA_SCRIPTS</code></td><td>top of script, or environment</td><td>Folder containing <code>zinc_pseudo.py</code>.</td></tr>
+<tr><td><code>FORCE</code></td><td>environment</td><td><code>1</code> ignores existing outputs and redoes every step. Default <code>0</code>.</td></tr>
+<tr><td><code>npts</code></td><td><code>make_gpf</code> call</td><td>Grid points per axis. Default <code>30,30,30</code> at 0.375 Å spacing, about 11 Å per side.</td></tr>
+<tr><td><code>--exhaustiveness</code></td><td>Vina call</td><td>Search thoroughness. Default 32.</td></tr>
+<tr><td><code>--cpu</code></td><td>Vina call</td><td>Taken from <code>$SLURM_CPUS_PER_TASK</code>.</td></tr>
+<tr><td><code>#SBATCH --time</code>, <code>--mem</code></td><td>script header</td><td>Default 12 h and 20 GB. Work scales with receptors × ligands, and it runs serially.</td></tr>
+</table></div>
+
+<h2 id="steps">What the script does</h2>
+<h3>Ligand preparation</h3>
+<p>For each file in <code>ligands/</code> a folder <code>ligands/&lt;name&gt;/</code> is created. <code>scrub.py</code> adds hydrogens and standardises the molecule, writing <code>&lt;name&gt;_H.sdf</code>, and Meeko writes <code>&lt;name&gt;.pdbqt</code>. Empty scrub output counts as a failure, and files that share a base name (such as <code>x.pdb</code> and <code>x.sdf</code>) are detected and the second one is skipped.</p>
+<h3>Receptor preparation</h3>
+<p>Each receptor is converted to <code>&lt;name&gt;.pdbqt</code>, then <code>zinc_pseudo.py</code> writes <code>&lt;name&gt;_tz.pdbqt</code> with <code>TZ</code> pseudoatoms. The box centre is the first zinc atom in the converted file, which works for both PDB and CIF input. Receptors with no zinc are skipped and reported.</p>
+<h3>Grid and docking, per receptor–ligand pair</h3>
+<ol class="steps">
+<li>Write the <code>.gpf</code> with the box centred on the zinc and the six AutoDock4Zn <code>nbp_r_eps</code> potentials. Atom types are read from the two PDBQT files.</li>
+<li>Run <code>autogrid4</code> to build the affinity maps.</li>
+<li>Run <code>vina --scoring ad4</code> against those maps.</li>
+</ol>
+<h3>Error handling</h3>
+<p>A failure in one ligand, receptor or pair is logged and skipped, not fatal. At the end the script lists every failed step and exits non-zero if there were any, so SLURM records the problem. <code>postprocess.py</code> only runs if at least one docking result exists.</p>
+
+<h2 id="resume">Resuming and re-running</h2>
+<p>Each step is skipped when its output exists, is non-empty, and is newer than its inputs. After a timeout you can just resubmit, and finished pairs are not redone. Editing an input file re-runs only the steps that depend on it.</p>
+<div class="warn">The skip checks use file timestamps, so changing a parameter (box size, exhaustiveness, scrub options) does not trigger a re-run. Use <code>FORCE=1</code> or delete the affected folders.</div>
+
+<h2 id="outputs">Output files</h2>
+<div class="cb"><pre><code>receptors/
+├── Astra_Zn.pdb                       input structure
+└── Astra_Zn/
+    ├── Astra_Zn.pdbqt                 prepared receptor
+    ├── Astra_Zn_tz.pdbqt              receptor + TZ pseudoatoms
+    └── Astra_Zn+ampicillin/           one folder per pair
+        ├── Astra_Zn_tz+ampicillin.gpf     grid parameters
+        ├── Astra_Zn_tz+ampicillin.glg     AutoGrid log
+        ├── Astra_Zn_tz.maps.fld / .xyz    grid description
+        ├── Astra_Zn_tz.&lt;type&gt;.map        affinity map per ligand atom type
+        ├── Astra_Zn_tz.e.map / .d.map     electrostatics / desolvation
+        └── Astra_Zn_tz+ampicillin.pdbqt   docking result (poses)</code></pre></div>
+<p>The map files take most of the disk space. Once a pair’s result PDBQT exists you can delete its maps without affecting the skip logic.</p>
+
+<h2 id="results">Reading results</h2>
+<p>The result PDBQT holds the predicted poses, best first. Each pose has a <code>REMARK VINA RESULT</code> line with the binding energy in kcal/mol (more negative is better) and two RMSD values relative to the best pose.</p>
+<div class="cb"><pre><code># All poses for one pair
+grep "VINA RESULT" receptors/Astra_Zn/Astra_Zn+ampicillin/*_tz+*.pdbqt
+
+# Best score for every pair, sorted
+for f in receptors/*/*+*/*_tz+*.pdbqt; do
+    echo "$(grep -m1 'VINA RESULT' "$f" | awk '{print $4}')  $f"
+done | sort -n</code></pre></div>
+<div class="note">AutoDock4 scores are rough rankings, not accurate binding energies. For a zinc enzyme, check that the pose is chemically sensible: the coordinating atom should sit near the zinc (about 2 Å). A good score far from the zinc is not a zinc-binding result.</div>
+<p>The <code>.glg</code> file confirms the box centre and size, and <code>slurm-&lt;jobid&gt;.output</code> holds Vina’s score tables and the list of failed steps. It also shows how many <code>TZ</code> atoms each receptor received.</p>
+
+<h2 id="pymol">Viewing in PyMOL</h2>
+<p><code>view_docking.py</code> sets up a clear view: pocket residues, the zinc and its coordinating residues, the ligand, dashed lines for zinc coordination and hydrogen bonds, and a printed table of each pose’s score and its shortest zinc-to-N/O/S distance.</p>
+<p>PyMOL usually runs on your own computer, so copy the files from the cluster first (quote paths that contain <code>+</code>):</p>
+<div class="cb"><pre><code>scp user@cluster:/path/to/receptors/Astra_Zn.pdb .
+scp "user@cluster:/path/to/receptors/Astra_Zn/Astra_Zn+ampicillin/Astra_Zn_tz+ampicillin.pdbqt" .</code></pre></div>
+<p>Then, in the PyMOL command line (the script can be saved anywhere):</p>
+<div class="cb"><pre><code>run ~/pymol_scripts/view_docking.py
+dock Astra_Zn.pdb, Astra_Zn_tz+ampicillin.pdbqt
+dock Astra_Zn.pdb, Astra_Zn_tz+ampicillin.pdbqt, pocket_cutoff=6, show_all=1
+snap figure.png</code></pre></div>
+<p><code>run</code> prints nothing on success, because it only defines the <code>dock</code> and <code>snap</code> commands. Each Vina pose loads as a PyMOL state, so step through them with the arrow keys. Use the original PDB as the receptor, not the <code>_tz.pdbqt</code>.</p>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<div class="tw"><table>
+<tr><th>Symptom</th><th>Likely cause</th><th>Fix</th></tr>
+<tr><td><code>Invalid input file ligands/X/X_H.sdf</code></td><td>scrub produced no usable output. This often happens with very large molecules such as DNA or RNA, or inputs without bond orders.</td><td>Remove macromolecules from <code>ligands/</code>. Run <code>scrub.py</code> by hand to see its messages. Prefer SDF or MOL2 over PDB.</td></tr>
+<tr><td><code>can't open file .../zinc_pseudo.py</code></td><td>Wrong <code>VINA_SCRIPTS</code> path.</td><td><code>find / -name zinc_pseudo.py 2&gt;/dev/null</code> and set the path.</td></tr>
+<tr><td><code>Grid Parameter File ... not found</code></td><td>Grid-writing step failed earlier.</td><td>Read the lines above it in the log.</td></tr>
+<tr><td><code>No Zn found in ...</code></td><td>No zinc atom in the converted receptor.</td><td>Check the structure contains <code>ZN</code> as a HETATM record.</td></tr>
+<tr><td><code>Wrote 0 TZ atoms</code></td><td>The zinc does not have exactly three coordinating protein atoms.</td><td>This site is outside what AutoDock4Zn handles. Results will not be meaningful.</td></tr>
+<tr><td><code>zero-size array ... fmin</code> in <code>postprocess.py</code></td><td>No docking results for it to plot.</td><td>Fix the earlier failures first.</td></tr>
+<tr><td><code>${VINA_SCRIPTS:/path}</code> syntax error</td><td>Missing hyphen.</td><td>Use <code>${VINA_SCRIPTS:-/path}</code>.</td></tr>
+</table></div>
+
+<h2 id="limits">Limitations</h2>
+<ul>
+<li><strong>Ligands only.</strong> Scrub and Meeko are built for drug-like molecules. DNA, RNA and proteins do not belong in <code>ligands/</code>.</li>
+<li><strong>One zinc per receptor.</strong> The box is centred on the first zinc found. Di-zinc enzymes such as metallo-β-lactamases have two, and a bridging hydroxide or water changes how many atoms coordinate each zinc, so check the <code>TZ</code> log line for the site you care about.</li>
+<li><strong>No reaction modelling.</strong> Docking shows pre-catalytic binding geometry. It cannot show bond breaking, and the nucleophile (such as a bridging hydroxide) is not modelled as a ligand.</li>
+<li><strong>Scores are approximate.</strong> Compare ligands against the same receptor, and treat geometry as more informative than small score differences.</li>
+</ul>
+</main>
+</div>
+<script>
+document.querySelectorAll('.cb').forEach(function(box){
+  var b=document.createElement('button');b.textContent='Copy';
+  b.addEventListener('click',function(){
+    var t=box.querySelector('pre').innerText;
+    var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy'},1200)};
+    if(navigator.clipboard){navigator.clipboard.writeText(t).then(done)}
+  });
+  box.appendChild(b);
+});
+</script>
+</body>
+</html>
